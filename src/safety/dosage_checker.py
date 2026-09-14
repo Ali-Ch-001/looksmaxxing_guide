@@ -16,9 +16,37 @@ from collections import defaultdict
 from src.safety.clinical_dictionary import CLINICAL_DICTIONARY, find_clinical_bound, ClinicalDosageCeiling
 
 
-# Regex to extract numeric value and dosage unit
+# Word-to-number mapping for written posological quantities
+WORD_TO_NUM: Dict[str, float] = {
+    "zero": 0.0, "half": 0.5, "quarter": 0.25,
+    "one": 1.0, "two": 2.0, "three": 3.0, "four": 4.0, "five": 5.0,
+    "six": 6.0, "seven": 7.0, "eight": 8.0, "nine": 9.0, "ten": 10.0,
+    "fifteen": 15.0, "twenty": 20.0, "twenty-five": 25.0, "thirty": 30.0,
+    "forty": 40.0, "fifty": 50.0, "hundred": 100.0,
+}
+
+UNIT_CANONICAL_MAP: Dict[str, str] = {
+    "milligrams": "mg", "milligram": "mg", "mg": "mg",
+    "micrograms": "mcg", "microgram": "mcg", "mcg": "mcg", "ug": "mcg",
+    "grams": "g", "gram": "g", "g": "g",
+    "percent": "%", "percentage": "%", "%": "%",
+    "milliliters": "ml", "milliliter": "ml", "ml": "ml",
+    "millimeters": "mm", "millimeter": "mm", "mm": "mm",
+    "iu": "iu", "spf": "spf",
+}
+
+_NUM_PATTERN = r'\d+(?:\.\d+)?|' + '|'.join(sorted(WORD_TO_NUM.keys(), key=len, reverse=True))
+_UNIT_PATTERN = '|'.join(sorted(UNIT_CANONICAL_MAP.keys(), key=len, reverse=True))
+
+# Regex to extract numeric value and dosage unit (supports digit and word forms, and full unit names)
 DOSAGE_PATTERN = re.compile(
-    r'(?P<number>\d+(?:\.\d+)?)\s*(?P<unit>mg|mcg|ug|g|%|percent|ml|mm|iu|spf)(?![a-zA-Z0-9])',
+    rf'(?P<number>{_NUM_PATTERN})\s*(?P<unit>{_UNIT_PATTERN})(?![a-zA-Z0-9])',
+    re.IGNORECASE
+)
+
+# Regex to extract ranges (e.g. "5 to 10 mg", "5-10 mg")
+RANGE_PATTERN = re.compile(
+    rf'(?P<start>{_NUM_PATTERN})\s*(?:-|to)\s*(?P<number>{_NUM_PATTERN})\s*(?P<unit>{_UNIT_PATTERN})(?![a-zA-Z0-9])',
     re.IGNORECASE
 )
 
@@ -80,7 +108,26 @@ def normalize_unit(numeric_value: float, source_unit: str, target_unit: str) -> 
 
 
 def extract_frequency_multiplier(sentence: str) -> float:
-    """Extracts daily frequency multiplier from a sentence."""
+    """Extracts daily frequency multiplier from a sentence, supporting dynamic hours and medical abbreviations."""
+    # Dynamic: every X hours (e.g. "every 6 hours" -> 4x/day, "every 4 hours" -> 6x/day)
+    every_h = re.search(r'\bevery\s+(\d+(?:\.\d+)?)\s+hours?\b', sentence, re.I)
+    if every_h:
+        h = float(every_h.group(1))
+        if h > 0:
+            return 24.0 / h
+
+    # Dynamic: Latin posological abbreviations qXh / q.X.h (e.g. "q6h" -> 4x/day, "q4h" -> 6x/day, "q8h" -> 3x/day)
+    q_h = re.search(r'\bq\.?(\d+)\.?h\.?\b', sentence, re.I)
+    if q_h:
+        h = float(q_h.group(1))
+        if h > 0:
+            return 24.0 / h
+
+    # Dynamic: X times daily / X times a day / Xx daily (e.g. "4 times daily" -> 4.0, "5x daily" -> 5.0)
+    times_d = re.search(r'\b(\d+)\s*(?:x|times)\s+(?:daily|(?:a\s+)?day)\b', sentence, re.I)
+    if times_d:
+        return float(times_d.group(1))
+
     for pattern, multiplier in FREQUENCY_PATTERNS:
         if pattern.search(sentence):
             return multiplier
@@ -153,14 +200,18 @@ class DeterministicDosageEngine:
 
             for match in matches:
                 num_str = match.group("number")
-                unit_str = match.group("unit").lower()
-                if unit_str == "percent":
-                    unit_str = "%"
+                raw_unit_str = match.group("unit").lower()
+                unit_str = UNIT_CANONICAL_MAP.get(raw_unit_str, raw_unit_str)
 
-                try:
-                    num_val = float(num_str)
-                except ValueError:
-                    continue
+                # Resolve number (digits or written word numbers like "ten", "five", "half")
+                lowered_num = num_str.lower()
+                if lowered_num in WORD_TO_NUM:
+                    num_val = WORD_TO_NUM[lowered_num]
+                else:
+                    try:
+                        num_val = float(num_str)
+                    except ValueError:
+                        continue
 
                 compound_bound = find_clinical_bound(sentence)
                 if not compound_bound and default_compound:
