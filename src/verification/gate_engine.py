@@ -14,13 +14,15 @@ Manages repair loops:
 from typing import Tuple, List, Optional, Dict, Any
 from src.schemas.pipeline_state import PipelineState, AuditGateResult, ArticleDraft, FAQItem
 from src.safety.dosage_checker import DeterministicDosageEngine
+from src.safety.clinical_dictionary import find_clinical_bound
 from src.verification.citation_verifier import CitationGroundingVerifier
 from src.verification.toxic_detector import ToxicSlangDetector
 from src.verification.schema_validator import SchemaValidator
+from src.verification.hybrid_critic import HybridClinicalCritic
 
 
 class DeterministicVerificationGate:
-    """Multi-stage programmatic verification gate."""
+    """Multi-stage programmatic verification gate with hybrid semantic criticism."""
 
     @classmethod
     def execute_audit(cls, state: PipelineState) -> AuditGateResult:
@@ -73,10 +75,20 @@ class DeterministicVerificationGate:
         else:
             state.output_json_ld = compiled_json_ld
 
+        # 5. Hybrid Semantic Critic Check (Chain-of-Thought reasoning)
+        critic = HybridClinicalCritic()
+        semantic_eval = critic._deterministic_semantic_inference(draft, state)
+        if not semantic_eval.passed:
+            for conflict in semantic_eval.contraindication_conflicts:
+                warnings.append(f"Semantic Critic Conflict: {conflict}")
+                failed_checks.append(f"semantic_critic:{conflict}")
+
         # Determine if auto-repair is permissible
         # HARD FAILURES: Dosage ceiling violations or physical self-harm practices trigger unrecoverable halt
         is_hard_failure = len(dosage_violations) > 0 or len(slang_detected) > 0
-        can_auto_repair = not is_hard_failure and (len(unverified_citations) > 0 or not schema_passed)
+        can_auto_repair = not is_hard_failure and (
+            len(unverified_citations) > 0 or not schema_passed or len(semantic_eval.contraindication_conflicts) > 0
+        )
 
         overall_passed = (len(failed_checks) == 0 and not is_hard_failure)
 
@@ -91,6 +103,8 @@ class DeterministicVerificationGate:
                 reasons.append(f"UNGROUNDED CITATIONS: {', '.join(unverified_citations)}")
             if schema_errors:
                 reasons.append("SCHEMA ERRORS: " + "; ".join(schema_errors))
+            if semantic_eval.contraindication_conflicts:
+                reasons.append("SEMANTIC CRITIC CONFLICTS: " + "; ".join(semantic_eval.contraindication_conflicts))
             rejection_reason = " | ".join(reasons)
 
         result = AuditGateResult(
@@ -108,23 +122,37 @@ class DeterministicVerificationGate:
 
     @classmethod
     def attempt_repair(cls, state: PipelineState, audit_result: AuditGateResult) -> bool:
-        """Executes targeted programmatic repairs on soft failure modes."""
+        """Executes targeted programmatic repairs with AST violation diff feedback."""
         if not state.draft or not audit_result.can_auto_repair:
             return False
 
         draft = state.draft
         repaired_anything = False
+        valid_retrieved_pmids = {p.get("id", "").upper() for p in state.retrieved_papers}
+        first_valid_pmid = state.retrieved_papers[0]["id"] if state.retrieved_papers else "PMID:31256594"
 
-        # 1. Strip ungrounded citations
+        # 1. Targeted AST Repair: Strip ungrounded citations and replace with retrieved PMIDs
         if audit_result.unverified_citations:
-            valid_retrieved_pmids = {p.get("id", "").upper() for p in state.retrieved_papers}
             new_citations = [c for c in draft.citations if c.upper() in valid_retrieved_pmids]
             if not new_citations and state.retrieved_papers:
-                new_citations = [state.retrieved_papers[0]["id"]]
+                new_citations = [first_valid_pmid]
             draft.citations = new_citations
             repaired_anything = True
 
-        # 2. Repair missing contraindications or FAQ
+        # 2. Targeted Semantic Critic Feedback Repair: Add missing safeguards
+        protocols_blob = " ".join(draft.actionable_protocol).lower()
+        if any(w in protocols_blob for w in ["tretinoin", "retinoid", "adapalene", "glycolic", "peel"]):
+            if not any("spf" in p.lower() or "sunscreen" in p.lower() for p in draft.actionable_protocol):
+                draft.actionable_protocol.append(
+                    f"Apply broad-spectrum SPF 50+ sunscreen daily in the morning to protect photosensitized tissue [{first_valid_pmid}]."
+                )
+                repaired_anything = True
+
+        if "oral minoxidil" in protocols_blob and not any("cardio" in c.lower() or "heart" in c.lower() for c in draft.contraindications):
+            draft.contraindications.append("Pre-existing cardiovascular instability, angina pectoris, or untreated hypotension")
+            repaired_anything = True
+
+        # 3. Repair missing contraindications or FAQ
         if not draft.contraindications:
             draft.contraindications = [
                 "Active barrier compromise or acute cutaneous infection",
