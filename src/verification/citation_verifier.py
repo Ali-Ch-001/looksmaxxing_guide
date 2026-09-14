@@ -93,23 +93,38 @@ class CitationGroundingVerifier:
                     paper.get("title", "")
                 ).lower()
 
-                # Extract numbers in protocol step, excluding the PMID citation itself
+                # Strip PMID references and procedural/duration markers (e.g. "Step 3", "for 6 months")
                 clean_step_for_nums = PMID_REGEX.sub('', step)
-                step_numbers = NUMBER_REGEX.findall(clean_step_for_nums)
+                clean_step_for_nums = PROCEDURAL_PATTERNS.sub('', clean_step_for_nums)
+
+                # 1. First extract clinical dosage quantities with units
+                dosage_matches = list(CLINICAL_DOSAGE_REGEX.finditer(clean_step_for_nums))
                 grounded = True
                 unsupported_numbers = []
 
+                for dm in dosage_matches:
+                    d_num = dm.group("number")
+                    d_unit = dm.group("unit").lower()
+                    # Check discrete word boundary for number and presence of unit in paper
+                    has_num = bool(re.search(rf'\b{re.escape(d_num)}\b', searchable_paper_text))
+                    has_unit = (d_unit in searchable_paper_text) if d_unit != "%" else ("%" in searchable_paper_text or "percent" in searchable_paper_text)
+                    if not (has_num and has_unit):
+                        unsupported_numbers.append(f"{d_num} {d_unit}")
+
+                # 2. Extract remaining non-procedural numbers
+                step_numbers = NUMBER_REGEX.findall(clean_step_for_nums)
                 for num in step_numbers:
-                    # Check if number appears in paper text
-                    if num not in searchable_paper_text:
-                        # Allow standard small integers (e.g. step numbers)
+                    # Check discrete word boundary
+                    if not re.search(rf'\b{re.escape(num)}\b', searchable_paper_text):
+                        # Allow standard small integers (e.g. "twice daily", "1 ml")
                         try:
                             val = float(num)
-                            if val in [1.0, 2.0]:  # e.g. "twice daily", "1 ml"
+                            if val in [1.0, 2.0]:
                                 continue
                         except ValueError:
                             pass
-                        unsupported_numbers.append(num)
+                        if num not in [dm.group("number") for dm in dosage_matches]:
+                            unsupported_numbers.append(num)
 
                 if unsupported_numbers:
                     errors.append(
