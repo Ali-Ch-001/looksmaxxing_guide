@@ -88,7 +88,7 @@ def _from_pydantic_state(p_state: PipelineState, state: GraphState) -> GraphStat
     state["crisis_payload"] = p_state.crisis_payload
     state["repair_attempts"] = p_state.repair_attempts
     state["audit_history"] = p_state.audit_history
-    state["step_history"] = p_state.step_history
+    state["step_history"] = list(dict.fromkeys(state.get("step_history", []) + p_state.step_history))
     state["output_cms_markdown"] = p_state.output_cms_markdown
     state["output_json_ld"] = p_state.output_json_ld
     return state

@@ -5,15 +5,88 @@ while strictly enforcing zero toxic forum slang and adhering to evidence matrix 
 """
 
 from typing import List, Dict, Any, Optional
+import os
+import json
+import logging
+import httpx
 from src.schemas.pipeline_state import ArticleDraft, FAQItem, PipelineState, EvidenceMatrix
 from src.drafting.prompt_templates import DUAL_CONSTRAINT_SYSTEM_PROMPT
+
+logger = logging.getLogger(__name__)
+
+
+class HttpLLMClient:
+    """Production-ready structured LLM client using httpx with JSON schema validation."""
+    def __init__(
+        self,
+        api_key: Optional[str] = None,
+        base_url: Optional[str] = None,
+        model: Optional[str] = None,
+        timeout: float = 30.0
+    ):
+        self.api_key = api_key or os.getenv("OPENAI_API_KEY") or os.getenv("LLM_API_KEY")
+        self.base_url = (base_url or os.getenv("LLM_BASE_URL", "https://api.openai.com/v1")).rstrip("/")
+        self.model = model or os.getenv("LLM_MODEL", "gpt-4o-mini")
+        self.timeout = timeout
+
+    async def generate_draft(self, state: PipelineState) -> Optional[ArticleDraft]:
+        if not self.api_key and not os.getenv("LLM_BASE_URL"):
+            return None
+
+        evidence_summary = []
+        for p in state.retrieved_papers:
+            evidence_summary.append(
+                f"- {p.get('id')}: {p.get('title')}. Standard dosage: {p.get('standard_dosage')} {p.get('unit', '')}. "
+                f"Ceiling: {p.get('ceiling')}. Abstract: {p.get('abstract', '')[:300]}"
+            )
+        papers_text = "\n".join(evidence_summary)
+        user_prompt = (
+            f"Topic: {state.raw_topic}\n"
+            f"Discipline: {state.discipline_namespace}\n"
+            f"Retrieved Peer-Reviewed Evidence:\n{papers_text}\n\n"
+            "Generate a structured ArticleDraft JSON conforming strictly to the prompt schema."
+        )
+
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "model": self.model,
+            "messages": [
+                {"role": "system", "content": DUAL_CONSTRAINT_SYSTEM_PROMPT},
+                {"role": "user", "content": user_prompt}
+            ],
+            "response_format": {"type": "json_object"},
+            "temperature": 0.2
+        }
+
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                resp = await client.post(f"{self.base_url}/chat/completions", headers=headers, json=payload)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    content = data["choices"][0]["message"]["content"]
+                    parsed = json.loads(content)
+                    return ArticleDraft.model_validate(parsed)
+                else:
+                    logger.warning(f"LLM generation HTTP {resp.status_code}: {resp.text}")
+        except Exception as exc:
+            logger.warning(f"LLM generation failed ({exc}), falling back to deterministic synthesis.")
+
+        return None
 
 
 class DualConstraintDraftingAgent:
     """Synthesizes factual guidance with high citation density and clinical neutrality."""
 
     def __init__(self, llm_client=None):
-        self.llm = llm_client
+        if llm_client is not None:
+            self.llm = llm_client
+        elif os.getenv("OPENAI_API_KEY") or os.getenv("LLM_API_KEY") or os.getenv("LLM_BASE_URL"):
+            self.llm = HttpLLMClient()
+        else:
+            self.llm = None
 
     async def draft(self, state: PipelineState) -> PipelineState:
         state.step_history.append("step_dual_constraint_drafting")
@@ -23,8 +96,10 @@ class DualConstraintDraftingAgent:
 
         # If an LLM client is supplied and provides structured output, use it
         if self.llm and hasattr(self.llm, "generate_draft"):
-            state.draft = await self.llm.generate_draft(state)
-            return state
+            llm_draft = await self.llm.generate_draft(state)
+            if llm_draft:
+                state.draft = llm_draft
+                return state
 
         # Deterministic generation from the EvidenceMatrix
         matrix = state.evidence_matrix
