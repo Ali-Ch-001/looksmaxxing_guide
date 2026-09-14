@@ -14,7 +14,7 @@ PMID_REGEX = re.compile(r'PMID:(\d+)', re.IGNORECASE)
 CLINICAL_DOSAGE_REGEX = re.compile(r'(?P<number>\d+(?:\.\d+)?)\s*(?P<unit>mg|mcg|ug|g|%|ml|mm|iu|spf)\b', re.IGNORECASE)
 NUMBER_REGEX = re.compile(r'(\d+(?:\.\d+)?)\s*(?:mg|mcg|%|g|ml|mm|iu|spf)?', re.IGNORECASE)
 PROCEDURAL_PATTERNS = re.compile(
-    r'\b(?:step\s+\d+|for\s+\d+\s+(?:months?|weeks?|days?|hours?|years?)|in\s+\d+\s+(?:months?|weeks?|days?)|'
+    r'\b(?:step\s+\d+|spf\s*\d+\+?|for\s+\d+\s+(?:months?|weeks?|days?|hours?|years?)|in\s+\d+\s+(?:months?|weeks?|days?)|'
     r'every\s+\d+\s+(?:hours?|days?)|wait\s+\d+\s+(?:minutes?|hours?|days?)|after\s+\d+\s+(?:months?|weeks?|days?))\b',
     re.IGNORECASE
 )

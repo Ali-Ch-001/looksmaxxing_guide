@@ -223,7 +223,29 @@ python -m src.cli --topic "bone smashing jawline" --output-dir dist/content
 
 ---
 
-## 9. License & Safety Disclaimer
+## 10. Completed Strategic Roadmap: Autonomous Clinical AI Architecture
+
+All four strategic roadmap capabilities have been implemented and verified across the test suite:
+
+### 1. Hybrid Deterministic / Semantic Verifier (`src/verification/hybrid_critic.py`)
+* Couples the un-bypassable posological AST engine with an LLM Critic Agent using Chain-of-Thought (CoT) reasoning.
+* Detects complex drug-drug interaction nuances (e.g. retinoids without photoprotection, systemic vasodilators lacking cardiovascular baselines, Category X teratogenicity warnings) that regex cannot capture.
+
+### 2. Targeted Programmatic Repair Loop with AST Diff Feedback (`src/verification/gate_engine.py`)
+* Replaces naive string replacement by feeding structured AST violation diffs directly back into the repair engine.
+* Surgically rewrites only non-compliant protocol statements to safe conservative ranges while preserving compliant surrounding prose.
+
+### 3. Dynamic MeSH Query Expansion (`src/retrieval/mesh_expander.py`)
+* Autonomously refines low-density search queries by mapping colloquial consumer phrases (`"hair thinning"`, `"acne"`, `"mewing"`) to official National Library of Medicine Medical Subject Headings (MeSH).
+* Formulates expanded boolean syntax (`("Alopecia"[Mesh] OR "Hypotrichosis"[Mesh])`) to retrieve authoritative clinical trials dynamically.
+
+### 4. Cache Invalidation on Guideline Updates (`src/persistence/state_graph.py`)
+* Computes a deterministic SHA256 fingerprint of `CLINICAL_DICTIONARY` posological ceilings and embeds it into every SQLite idempotency key (`SHA256(topic:version:fingerprint)`).
+* Any tightening or revision of medical dosage thresholds instantly invalidates stale checkpoints, permanently preventing cache poisoning.
+
+---
+
+## 11. License & Safety Disclaimer
 
 This project is licensed under the MIT License.
 
