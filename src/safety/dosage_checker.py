@@ -139,7 +139,9 @@ class DeterministicDosageEngine:
     @staticmethod
     def extract_dosages_from_text(text: str, default_compound: Optional[str] = None) -> List[DosageExtractionResult]:
         results: List[DosageExtractionResult] = []
-        sentences = [s.strip() for s in re.split(r'(?:\r?\n|(?<!\d)\.(?!\d)|[;•])+', text) if s.strip()]
+        # Pre-process inter-token dot/hyphen spacing (e.g. "o . r . a . l" -> "oral")
+        deobfuscated_text = re.sub(r'(?<=\b[a-zA-Z0-9])\s*[\.\-_]\s*(?=[a-zA-Z0-9]\b)', '', text)
+        sentences = [s.strip() for s in re.split(r'(?:\r?\n|[;•]|(?<=[a-zA-Z0-9\)])\.\s+(?=[A-Z0-9]))', deobfuscated_text) if s.strip()]
 
         for sentence in sentences:
             sentence_lower = sentence.lower()

@@ -72,6 +72,16 @@ class AuditGateResult(BaseModel):
     can_auto_repair: bool = False
 
 
+class ExecutionTelemetry(BaseModel):
+    start_time_iso: str = ""
+    duration_ms: float = 0.0
+    stage_latencies_ms: Dict[str, float] = Field(default_factory=dict)
+    tokens_processed_est: int = 0
+    gate_checks_performed: int = 0
+    repairs_executed: int = 0
+    idempotent_hit: bool = False
+
+
 class PipelineState(BaseModel):
     raw_topic: str
     normalized_topic: str = ""
@@ -90,5 +100,6 @@ class PipelineState(BaseModel):
     audit_history: List[AuditGateResult] = Field(default_factory=list)
     idempotency_key: Optional[str] = None
     step_history: List[str] = Field(default_factory=list)
+    telemetry: Optional[ExecutionTelemetry] = None
     output_cms_markdown: Optional[str] = None
     output_json_ld: Optional[Dict[str, Any]] = None

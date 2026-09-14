@@ -132,38 +132,72 @@ def _levenshtein_distance(s1: str, s2: str) -> int:
     return previous_row[-1]
 
 
+UNICODE_HOMOGLYPH_MAP = {
+    # Cyrillic lookalikes
+    'а': 'a', 'с': 'c', 'е': 'e', 'о': 'o', 'р': 'p', 'х': 'x',
+    'у': 'y', 'і': 'i', 'ј': 'j', 'ѕ': 's', 'в': 'b', 'к': 'k',
+    'м': 'm', 'н': 'h', 'т': 't', 'д': 'd', 'г': 'g', 'л': 'l',
+    # Greek lookalikes
+    'α': 'a', 'β': 'b', 'ε': 'e', 'η': 'n', 'ι': 'i', 'κ': 'k',
+    'ν': 'v', 'ο': 'o', 'ρ': 'p', 'τ': 't', 'υ': 'u', 'χ': 'x', 'ω': 'w',
+    # Common leetspeak substitutions
+    '@': 'a', '4': 'a', '$': 's', '5': 's', '0': 'o', '1': 'i', '!': 'i',
+    '3': 'e', '7': 't', '+': 't', '8': 'b', '_': ' ', '-': ' ', '/': ' '
+}
+
+ZERO_WIDTH_CHARS = {
+    '\u200b', '\u200c', '\u200d', '\ufeff', '\u00ad', '\u2060',
+    '\u2000', '\u2001', '\u2002', '\u2003', '\u2004', '\u2005',
+    '\u2006', '\u2007', '\u2008', '\u2009', '\u200a', '\u2028', '\u2029'
+}
+
+
 def _normalize_text(text: str) -> str:
-    """Normalizes leetspeak and noisy characters to detect evasion attempts."""
-    substitutions = {
-        '0': 'o', '1': 'i', '3': 'e', '4': 'a', '5': 's',
-        '7': 't', '@': 'a', '$': 's', '_': ' ', '-': ' '
-    }
-    normalized = text.lower()
-    for char, rep in substitutions.items():
-        normalized = normalized.replace(char, rep)
-    # Collapse multiple whitespaces
-    normalized = re.sub(r'\s+', ' ', normalized).strip()
+    """Multi-pass Unicode NFKD, zero-width stripping, and homoglyph de-obfuscation."""
+    # 1. Unicode decomposition (NFKD) handles fullwidth characters and combined accents
+    decomposed = unicodedata.normalize('NFKD', text)
+
+    # 2. Strip zero-width and invisible characters
+    cleaned_chars = [c for c in decomposed if c not in ZERO_WIDTH_CHARS]
+    cleaned = "".join(cleaned_chars).lower()
+
+    # 3. Apply homoglyph and leetspeak substitution map
+    mapped_chars = [UNICODE_HOMOGLYPH_MAP.get(c, c) for c in cleaned]
+    mapped_text = "".join(mapped_chars)
+
+    # 4. Collapse punctuation and whitespaces
+    mapped_text = re.sub(r'[^\w\s]', ' ', mapped_text)
+    normalized = re.sub(r'\s+', ' ', mapped_text).strip()
     return normalized
 
 
+def _compact_alphanumeric(text: str) -> str:
+    """Returns contiguous lowercase alphanumeric characters for detecting space-injected evasions."""
+    norm = _normalize_text(text)
+    return re.sub(r'[^a-z0-9]', '', norm)
+
+
 def check_banned_topic(raw_text: str) -> Tuple[bool, Optional[Dict[str, Any]], Optional[str]]:
-    """Evaluates raw topic against prohibited patterns using exact and fuzzy matching.
+    """Evaluates raw topic against prohibited patterns using exact, compact, and fuzzy matching.
     
     Returns: (is_banned, prohibited_pattern_dict, matched_phrase)
     """
     normalized = _normalize_text(raw_text)
+    compact = _compact_alphanumeric(raw_text)
 
-    # 1. Exact & substring check across prohibited patterns
+    # 1. Exact & substring check across prohibited patterns (normalized and compact)
     for pattern in PROHIBITED_PATTERNS:
         for kw in pattern["keywords"]:
             norm_kw = _normalize_text(kw)
-            if norm_kw in normalized:
+            compact_kw = _compact_alphanumeric(kw)
+            if norm_kw in normalized or compact_kw in compact:
                 return True, pattern, kw
 
     # 2. Toxic incel despair tropes check
     for trope in TOXIC_SUBCLUTURE_TROPES:
         norm_trope = _normalize_text(trope)
-        if norm_trope in normalized:
+        compact_trope = _compact_alphanumeric(trope)
+        if norm_trope in normalized or compact_trope in compact:
             return True, {
                 "id": "TOXIC_INSECURE_TROPE",
                 "harm_reduction_notice": (
@@ -173,20 +207,37 @@ def check_banned_topic(raw_text: str) -> Tuple[bool, Optional[Dict[str, Any]], O
                 "crisis_category": "body_dysmorphia"
             }, trope
 
-    # 3. Fuzzy n-gram matching for obfuscated prohibited phrases (e.g. 'b0ne smash1ng')
+    # 3. Fuzzy n-gram matching for obfuscated prohibited phrases & toxic tropes (e.g. 'b0ne smash1ng')
     words = normalized.split()
     for pattern in PROHIBITED_PATTERNS:
         for kw in pattern["keywords"]:
-            kw_words = kw.split()
+            kw_words = _normalize_text(kw).split()
             kw_len = len(kw_words)
             if len(words) >= kw_len:
                 for i in range(len(words) - kw_len + 1):
                     window = " ".join(words[i:i + kw_len])
-                    dist = _levenshtein_distance(window, kw)
-                    # Allow tolerance of 1 edit for 2-word phrases, 2 for longer
+                    dist = _levenshtein_distance(window, " ".join(kw_words))
                     max_allowed = 1 if len(kw) < 12 else 2
                     if dist <= max_allowed:
                         return True, pattern, window
+
+    for trope in TOXIC_SUBCLUTURE_TROPES:
+        trope_words = _normalize_text(trope).split()
+        t_len = len(trope_words)
+        if len(words) >= t_len:
+            for i in range(len(words) - t_len + 1):
+                window = " ".join(words[i:i + t_len])
+                dist = _levenshtein_distance(window, " ".join(trope_words))
+                max_allowed = 1 if len(trope) < 12 else 2
+                if dist <= max_allowed:
+                    return True, {
+                        "id": "TOXIC_INSECURE_TROPE",
+                        "harm_reduction_notice": (
+                            "Content containing fatalistic incel subculture tropes or dysmorphic despair language "
+                            "is barred from automated generation to prevent reinforcing appearance-based psychological distress."
+                        ),
+                        "crisis_category": "body_dysmorphia"
+                    }, window
 
     return False, None, None
 

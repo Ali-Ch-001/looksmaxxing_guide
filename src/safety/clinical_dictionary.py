@@ -7,6 +7,7 @@ and American Academy of Dermatology (AAD) consensus guidelines.
 
 from typing import Dict, List, Optional, Literal
 from pydantic import BaseModel, Field
+from src.safety.triage import _normalize_text, _compact_alphanumeric
 
 
 class ClinicalDosageCeiling(BaseModel):
@@ -202,12 +203,13 @@ CLINICAL_DICTIONARY: Dict[str, ClinicalDosageCeiling] = {
 
 def find_clinical_bound(text: str, route_hint: Optional[str] = None) -> Optional[ClinicalDosageCeiling]:
     """Resolves a compound mentioned in text to its clinical dosage boundary contract."""
-    lowered = text.lower()
+    lowered = _normalize_text(text)
+    compact = _compact_alphanumeric(text)
     
     # Check oral vs topical minoxidil explicitly
-    if "minoxidil" in lowered or "minox" in lowered or "loniten" in lowered or "rogaine" in lowered:
-        is_oral = route_hint == "oral" or any(w in lowered for w in ["oral", "pill", "tablet", "capsule", "systemic", "swallow", "ingest", "drink", "loniten"])
-        is_topical = route_hint == "topical" or any(w in lowered for w in ["topical", "foam", "scalp", "apply", "rogaine"])
+    if any(k in lowered or k in compact for k in ["minoxidil", "minox", "loniten", "rogaine"]):
+        is_oral = route_hint == "oral" or any(w in lowered or w in compact for w in ["oral", "pill", "tablet", "capsule", "systemic", "swallow", "ingest", "drink", "loniten"])
+        is_topical = route_hint == "topical" or any(w in lowered or w in compact for w in ["topical", "foam", "scalp", "apply", "rogaine"])
         if is_oral:
             return CLINICAL_DICTIONARY["oral_minoxidil"]
         if is_topical:
@@ -216,33 +218,33 @@ def find_clinical_bound(text: str, route_hint: Optional[str] = None) -> Optional
         return CLINICAL_DICTIONARY["oral_minoxidil"] if "mg" in lowered else CLINICAL_DICTIONARY["topical_minoxidil"]
 
     # Check finasteride
-    if "finasteride" in lowered or "propecia" in lowered or "proscar" in lowered:
-        if "topical" in lowered or route_hint == "topical":
+    if any(k in lowered or k in compact for k in ["finasteride", "propecia", "proscar"]):
+        if "topical" in lowered or "topical" in compact or route_hint == "topical":
             return CLINICAL_DICTIONARY["topical_finasteride"]
         return CLINICAL_DICTIONARY["oral_finasteride"]
 
     # Check dutasteride
-    if "dutasteride" in lowered or "avodart" in lowered:
+    if any(k in lowered or k in compact for k in ["dutasteride", "avodart"]):
         return CLINICAL_DICTIONARY["oral_dutasteride"]
 
     # Check tretinoin
-    if "tretinoin" in lowered or "retin-a" in lowered or "retinoic acid" in lowered:
+    if any(k in lowered or k in compact for k in ["tretinoin", "retina", "retinoicacid"]):
         return CLINICAL_DICTIONARY["topical_tretinoin"]
 
     # Check adapalene
-    if "adapalene" in lowered or "differin" in lowered:
+    if any(k in lowered or k in compact for k in ["adapalene", "differin"]):
         return CLINICAL_DICTIONARY["topical_adapalene"]
 
     # Check glycolic
-    if "glycolic" in lowered:
+    if "glycolic" in lowered or "glycolic" in compact:
         return CLINICAL_DICTIONARY["at_home_glycolic_acid"]
 
     # Check salicylic
-    if "salicylic" in lowered or "bha" in lowered:
+    if "salicylic" in lowered or "salicylic" in compact or "bha" in lowered:
         return CLINICAL_DICTIONARY["at_home_salicylic_acid"]
 
     # Check microneedling / derma roller
-    if any(k in lowered for k in ["microneedl", "derma roll", "dermaroll", "derma stamp"]):
+    if any(k in lowered or k in compact for k in ["microneedl", "dermaroll", "dermastamp"]):
         return CLINICAL_DICTIONARY["at_home_microneedling"]
 
     return None
