@@ -7,6 +7,7 @@ immediately to crisis/harm-reduction resources before any LLM execution occurs.
 
 from __future__ import annotations
 import re
+import unicodedata
 from typing import Dict, Any, List, Optional, Tuple
 from src.schemas.pipeline_state import PipelineState, RiskCategory
 
