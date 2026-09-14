@@ -2,6 +2,7 @@ from src.safety.clinical_dictionary import (
     CLINICAL_DICTIONARY,
     ClinicalDosageCeiling,
     find_clinical_bound,
+    get_dictionary_fingerprint,
 )
 from src.safety.triage import (
     SafetyTriageAgent,

@@ -13,6 +13,7 @@ from typing import List, Dict, Any, Optional
 import httpx
 from src.retrieval.knowledge_base import CLINICAL_PAPERS
 from src.retrieval.context_splitter import ContextSplitter, DisciplineNamespace
+from src.retrieval.mesh_expander import MeSHQueryExpander
 
 logger = logging.getLogger(__name__)
 
@@ -127,6 +128,25 @@ class PubMedClient:
                 matched_candidates.append(paper)
 
         filtered_curated = ContextSplitter.filter_documents_for_namespace(matched_candidates, namespace)
+        
+        # Dynamic MeSH Query Expansion when citation density is low (< 2 papers)
+        mesh_query, mesh_terms = MeSHQueryExpander.expand(raw_query)
+        if mesh_terms and len(filtered_curated) < 2:
+            for term in mesh_terms:
+                term_tokens = [t.lower() for t in term.split() if len(t) > 2]
+                for paper in self._curated_corpus:
+                    if paper in filtered_curated:
+                        continue
+                    searchable_blob = (
+                        paper.get("title", "") + " " +
+                        paper.get("compound", "") + " " +
+                        paper.get("abstract", "")
+                    ).lower()
+                    if any(tok in searchable_blob for tok in term_tokens):
+                        if paper not in matched_candidates:
+                            matched_candidates.append(paper)
+            filtered_curated = ContextSplitter.filter_documents_for_namespace(matched_candidates, namespace)
+
         if filtered_curated:
             return filtered_curated
 

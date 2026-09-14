@@ -7,10 +7,16 @@ from src.schemas.pipeline_state import PipelineState
 from src.persistence.db import StateStore
 
 
-def compute_idempotency_key(topic: str, retrieval_version: str = "v1") -> str:
-    """Computes deterministic hash from (primary_keyword, retrieval_version)."""
+def compute_idempotency_key(topic: str, retrieval_version: str = "v1", dictionary_hash: Optional[str] = None) -> str:
+    """Computes deterministic hash from (primary_keyword, retrieval_version, dictionary_fingerprint).
+    
+    Any updates or tightening of posological limits in CLINICAL_DICTIONARY automatically
+    invalidates stale checkpoints, preventing cache poisoning across medical guideline revisions.
+    """
+    from src.safety.clinical_dictionary import get_dictionary_fingerprint
+    dict_hash = dictionary_hash or get_dictionary_fingerprint()
     norm = topic.strip().lower()
-    raw = f"{norm}:{retrieval_version}"
+    raw = f"{norm}:{retrieval_version}:{dict_hash}"
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 

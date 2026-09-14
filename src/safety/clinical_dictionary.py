@@ -248,3 +248,26 @@ def find_clinical_bound(text: str, route_hint: Optional[str] = None) -> Optional
         return CLINICAL_DICTIONARY["at_home_microneedling"]
 
     return None
+
+
+def get_dictionary_fingerprint() -> str:
+    """Computes a deterministic cryptographic fingerprint of the active clinical dictionary.
+    
+    Ensures that any update or tightening to clinical ceilings immediately invalidates
+    stale checkpoints in the persistence state graph.
+    """
+    import hashlib
+    import json
+    elements = []
+    for key in sorted(CLINICAL_DICTIONARY.keys()):
+        ceiling_obj = CLINICAL_DICTIONARY[key]
+        elements.append({
+            "key": key,
+            "route": ceiling_obj.route,
+            "unit": ceiling_obj.unit,
+            "ceiling": ceiling_obj.absolute_ceiling,
+            "min": ceiling_obj.standard_min,
+            "max": ceiling_obj.standard_max,
+        })
+    serialized = json.dumps(elements, sort_keys=True)
+    return hashlib.sha256(serialized.encode("utf-8")).hexdigest()[:16]
