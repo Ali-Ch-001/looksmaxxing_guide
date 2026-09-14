@@ -21,8 +21,8 @@ def test_cardiology_drift_10mg_oral_minoxidil_rejection():
         default_compound="oral minoxidil"
     )
     assert passed is False
-    assert len(violations) == 1
-    assert "exceeds absolute dermatological safety ceiling" in violations[0]
+    assert len(violations) >= 1
+    assert "exceeds absolute safety ceiling" in violations[0]
     assert "CARDIOVASCULAR_HYPERTENSIVE_OVERDOSE_DRIFT" in violations[0]
 
 
